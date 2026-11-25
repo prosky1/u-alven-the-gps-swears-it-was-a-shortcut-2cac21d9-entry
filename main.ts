@@ -1,50 +1,63 @@
-// The GPS Swears It Was a Shortcut — entry program.
+// The GPS Swears It Was a Shortcut — make.fun entry.
 //
-// Writes the GPS's one-line excuse to /output/entry.txt, exactly as drafted:
-// a single line of plain text, no setup, no dialogue tag, just the excuse.
+// The program below emits exactly one line: the GPS's excuse for the
+// wrong road, with no setup and no dialogue tag. The sealed scorer reads
+// /output/entry.txt, so this file's only job is to put that line there,
+// byte for byte, and to refuse to run if the line ever stops fitting the
+// bounty gate (UTF-8, 1-200 characters, single line, no whitespace-only).
 //
-// Usage: node main.ts [output-path]
-//   Defaults to /output/entry.txt (ENTRY_OUTPUT env var also works).
+// Run:  node main.ts [output-path]
+//   Without an argument the destination is /output/entry.txt; the
+//   ENTRY_OUTPUT environment variable overrides the default too.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-const EXCUSE =
-  "The shortcut existed on my map from 2019, when that cornfield was still a highway and the lake was still a parking lot.";
+// The entry text. One sentence, one concrete scene, punch on the last
+// words. 109 characters, verified by the guard below at startup.
+const ENTRY =
+  "The church aisle was a service road on my map, so I delivered you to the front row — right next to the bride.";
 
-const OUTPUT_PATH =
-  process.argv[2] ?? process.env.ENTRY_OUTPUT ?? "/output/entry.txt";
-
-// Gate guard: the sealed scorer only accepts UTF-8 text of 1-200
-// characters that is not only whitespace, on a single line. Refuse to
-// write anything that would fail the gate instead of shipping it.
-function validate(text: string): void {
+function guard(text: string): void {
+  const problems: string[] = [];
   if (text.length < 1 || text.length > 200) {
-    throw new Error(`entry is ${text.length} characters, must be 1-200`);
+    problems.push(`length ${text.length} is outside 1-200 characters`);
   }
-  if (text.trim().length === 0) {
-    throw new Error("entry must not be only whitespace");
+  if (text.trim() === "") {
+    problems.push("text is only whitespace");
   }
-  if (/[\r\n]/.test(text)) {
-    throw new Error("entry must be a single line");
+  if (text.includes("\n") || text.includes("\r")) {
+    problems.push("text spans more than one line");
   }
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
-    throw new Error("entry must not contain control characters");
+  for (const ch of text) {
+    if (ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f) {
+      problems.push("text contains a control character");
+      break;
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`entry fails the bounty gate: ${problems.join("; ")}`);
   }
 }
 
-validate(EXCUSE);
-
-mkdirSync(dirname(OUTPUT_PATH), { recursive: true });
-writeFileSync(OUTPUT_PATH, EXCUSE, "utf8");
-
-// Read-back check: the file the grader scores must be byte-for-byte the
-// validated excuse. A partial write or encoding surprise fails loudly here
-// instead of silently shipping a broken entry.
-const written = readFileSync(OUTPUT_PATH, "utf8");
-if (written !== EXCUSE) {
-  throw new Error(
-    `read-back mismatch: file holds ${written.length} characters, expected ${EXCUSE.length}`,
+function destination(): string {
+  return (
+    process.argv[2] ?? process.env.ENTRY_OUTPUT ?? "/output/entry.txt"
   );
 }
-console.log(`wrote ${EXCUSE.length} characters to ${OUTPUT_PATH}`);
+
+const outPath = destination();
+guard(ENTRY);
+
+mkdirSync(dirname(outPath), { recursive: true });
+writeFileSync(outPath, ENTRY, "utf8");
+
+// Confirm what landed on disk is the same bytes we validated, not a
+// truncated or re-encoded copy: compare the raw bytes, not a decoded
+// string that could hide an encoding slip.
+const onDisk = readFileSync(outPath);
+if (!onDisk.equals(Buffer.from(ENTRY, "utf8"))) {
+  throw new Error("read-back mismatch: file bytes differ from entry text");
+}
+
+console.log(`wrote ${ENTRY.length} characters to ${outPath}`);
